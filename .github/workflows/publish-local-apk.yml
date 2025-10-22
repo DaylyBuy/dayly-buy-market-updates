@@ -11,8 +11,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout updates repo
+      # ✅ Always check out the default branch (e.g., main) so we're NOT in detached HEAD
+      - name: Checkout updates repo (default branch)
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
 
       - name: Install jq
         run: |
@@ -62,7 +66,7 @@ jobs:
           CLEAN="${RAW#v}"
           echo "VERSION_NAME=$CLEAN" >> $GITHUB_ENV
 
-      - name: Update releases/latest.json
+      - name: Update releases/latest.json on default branch
         run: |
           mkdir -p releases
           NOTES=$(jq -Rn --arg s "${{ github.event.release.body }}" '$s')
@@ -81,5 +85,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add releases/latest.json
-          git commit -m "latest.json → ${{ github.event.release.tag_name }} (run ${GITHUB_RUN_NUMBER})"
+          git commit -m "latest.json → ${{ github.event.release.tag_name }} (run ${GITHUB_RUN_NUMBER})" || echo "No changes to commit"
           git push
