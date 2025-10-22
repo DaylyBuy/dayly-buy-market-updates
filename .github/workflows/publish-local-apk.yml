@@ -14,17 +14,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      # ✅ Be on the default branch (not on the tag = no detached HEAD)
+      # Check out the default branch (usually "main")
       - name: Checkout default branch
         uses: actions/checkout@v4
         with:
           ref: ${{ env.DEFAULT_BRANCH }}
           fetch-depth: 0
-
-      - name: Ensure local branch tracks remote
-        run: |
-          git fetch origin "${DEFAULT_BRANCH}"
-          git checkout -B "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}" || git checkout -B "${DEFAULT_BRANCH}"
 
       - name: Install jq
         run: |
@@ -40,12 +35,14 @@ jobs:
           ASSETS_API="https://api.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets"
           ASSETS_JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$ASSETS_API")
           echo "$ASSETS_JSON" > assets.json
+
           APK_ID=$(jq -r '[.[] | select(.name | endswith(".apk"))][0].id' assets.json)
           APK_NAME=$(jq -r '[.[] | select(.name | endswith(".apk"))][0].name' assets.json)
           if [ -z "$APK_ID" ] || [ "$APK_ID" = "null" ]; then
             echo "No .apk asset found on this release. Upload an .apk and publish/edit the release again."
             exit 1
           fi
+
           echo "APK_ID=$APK_ID" >> $GITHUB_ENV
           echo "APK_NAME=$APK_NAME" >> $GITHUB_ENV
 
@@ -74,6 +71,7 @@ jobs:
         run: |
           mkdir -p releases
           NOTES=$(jq -Rn --arg s "${{ github.event.release.body }}" '$s')
+
           cat > releases/latest.json <<JSON
           {
             "versionName": "${VERSION_NAME}",
@@ -84,9 +82,11 @@ jobs:
             "releaseNotes": ${NOTES}
           }
           JSON
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add releases/latest.json
           git commit -m "latest.json → ${{ github.event.release.tag_name }} (run ${GITHUB_RUN_NUMBER})" || echo "No changes to commit"
-          # ✅ Push explicitly to the default branch
-          git push origin "${DEFAULT_BRANCH}"
+
+          # ✅ Works even in detached HEAD: push this commit to the default branch explicitly
+          git push origin HEAD:${DEFAULT_BRANCH}
