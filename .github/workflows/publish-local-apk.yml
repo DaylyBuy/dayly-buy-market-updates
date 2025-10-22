@@ -1,0 +1,85 @@
+name: Publish local APK → latest.json
+
+on:
+  release:
+    types: [published, edited]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout updates repo
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Find .apk asset on the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_ID="${{ github.event.release.id }}"
+          REPO="${{ github.repository }}"
+
+          ASSETS_API="https://api.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets"
+          ASSETS_JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$ASSETS_API")
+          echo "$ASSETS_JSON" > assets.json
+
+          APK_ID=$(jq -r '[.[] | select(.name | endswith(".apk"))][0].id' assets.json)
+          APK_NAME=$(jq -r '[.[] | select(.name | endswith(".apk"))][0].name' assets.json)
+
+          if [ -z "$APK_ID" ] || [ "$APK_ID" = "null" ]; then
+            echo "No .apk asset found on this release. Upload an .apk to the Release and publish again."
+            exit 1
+          fi
+
+          echo "APK_ID=$APK_ID" >> $GITHUB_ENV
+          echo "APK_NAME=$APK_NAME" >> $GITHUB_ENV
+
+      - name: Download APK asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -L \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/assets/${APK_ID}" \
+            -o release.apk
+
+      - name: Compute SHA256 and size
+        run: |
+          echo "SHA256=$(sha256sum release.apk | cut -d ' ' -f1)" >> $GITHUB_ENV
+          echo "SIZE=$(wc -c < release.apk)" >> $GITHUB_ENV
+
+      - name: Derive versionName from tag (strip leading v)
+        run: |
+          RAW="${{ github.event.release.tag_name }}"
+          CLEAN="${RAW#v}"
+          echo "VERSION_NAME=$CLEAN" >> $GITHUB_ENV
+
+      - name: Update releases/latest.json
+        run: |
+          mkdir -p releases
+          NOTES=$(jq -Rn --arg s "${{ github.event.release.body }}" '$s')
+
+          cat > releases/latest.json <<JSON
+          {
+            "versionName": "${VERSION_NAME}",
+            "versionCode": ${GITHUB_RUN_NUMBER},
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/${APK_NAME}",
+            "sha256": "${SHA256}",
+            "size": ${SIZE},
+            "releaseNotes": ${NOTES}
+          }
+          JSON
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add releases/latest.json
+          git commit -m "latest.json → ${{ github.event.release.tag_name }} (run ${GITHUB_RUN_NUMBER})"
+          git push
