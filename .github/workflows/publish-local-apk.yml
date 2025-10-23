@@ -82,17 +82,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Base64-encode the file (one line)
           CONTENT_B64=$(base64 -w 0 releases/latest.json)
 
-          # Try to read the current file to get its SHA (needed for updates)
           CURRENT_SHA=$(curl -s \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/contents/releases/latest.json?ref=main" \
             | jq -r '.sha // empty')
 
-          # Construct request payload
           jq -nc \
             --arg msg "latest.json → ${TAG} (run ${GITHUB_RUN_NUMBER})" \
             --arg content "$CONTENT_B64" \
@@ -112,7 +109,6 @@ jobs:
             -d @payload.json)
 
           echo "$RESP" | jq .
-          # Basic success check: ensure "content" object exists in response
           if [ "$(echo "$RESP" | jq -r '.content.path // empty')" != "releases/latest.json" ]; then
             echo "Failed to update releases/latest.json on main"
             exit 1
