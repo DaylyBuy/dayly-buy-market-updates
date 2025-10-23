@@ -1,0 +1,171 @@
+name: Publish local APK → latest.json (manual + release)
+
+on:
+  # Manual trigger with inputs so you can pick the release tag and target branch
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g., v1.0.3). Leave empty to use latest release.'
+        required: false
+      target_branch:
+        description: 'Branch to write latest.json to'
+        required: false
+        default: 'main'
+  # Optional: still runs automatically when a Release is published/edited
+  release:
+    types: [published, edited]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      # Resolve TAG and RELEASE_ID for both triggers (manual or release)
+      - name: Resolve release (tag/id)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "TAG=${{ github.event.release.tag_name }}" >> $GITHUB_ENV
+            echo "RELEASE_ID=${{ github.event.release.id }}" >> $GITHUB_ENV
+          else
+            INPUT_TAG="${{ inputs.tag }}"
+            if [ -n "$INPUT_TAG" ]; then
+              RESP=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/releases/tags/$INPUT_TAG")
+            else
+              RESP=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/releases/latest")
+            fi
+            echo "$RESP" | jq .
+            echo "TAG=$(echo "$RESP" | jq -r .tag_name)" >> $GITHUB_ENV
+            echo "RELEASE_ID=$(echo "$RESP" | jq -r .id)" >> $GITHUB_ENV
+          fi
+
+      - name: Set TARGET_BRANCH
+        run: |
+          TB="${{ inputs.target_branch }}"
+          [ -z "$TB" ] && TB="main"
+          echo "TARGET_BRANCH=$TB" >> $GITHUB_ENV
+          echo "Will write to branch: $TB"
+
+      - name: Find .apk asset on the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPO="${{ github.repository }}"
+          ASSETS_API="https://api.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets"
+          ASSETS_JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$ASSETS_API")
+          echo "$ASSETS_JSON" > assets.json
+
+          # Pick the first *.apk asset
+          APK_ID=$(jq -r '[.[] | select(.name | endswith(".apk"))][0].id' assets.json)
+          APK_NAME=$(jq -r '[.[] | select(.name | endswith(".apk"))][0].name' assets.json)
+          if [ -z "$APK_ID" ] || [ "$APK_ID" = "null" ]; then
+            echo "No .apk asset found on this release. Upload an .apk and run again."
+            exit 1
+          fi
+
+          echo "APK_ID=$APK_ID"   >> $GITHUB_ENV
+          echo "APK_NAME=$APK_NAME" >> $GITHUB_ENV
+          echo "Found APK: $APK_NAME (asset id: $APK_ID)"
+
+      - name: Download APK asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -L \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/assets/${APK_ID}" \
+            -o release.apk
+          ls -lh release.apk
+
+      - name: Compute SHA256 and size
+        run: |
+          echo "SHA256=$(sha256sum release.apk | cut -d ' ' -f1)" >> $GITHUB_ENV
+          echo "SIZE=$(wc -c < release.apk)" >> $GITHUB_ENV
+          echo "sha256: $SHA256"
+          echo "size (bytes): $SIZE"
+
+      - name: Derive versionName from tag (strip leading v)
+        run: |
+          RAW="${TAG}"
+          CLEAN="${RAW#v}"
+          echo "VERSION_NAME=$CLEAN" >> $GITHUB_ENV
+          echo "versionName: $CLEAN"
+
+      - name: Build latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p releases
+
+          # Get release notes body and encode as a proper JSON string
+          NOTES_JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}" \
+            | jq -r '.body // ""' \
+            | jq -Rs '.')  # turn raw text into a JSON string
+
+          cat > releases/latest.json <<JSON
+          {
+            "versionName": "${VERSION_NAME}",
+            "versionCode": ${GITHUB_RUN_NUMBER},
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/${TAG}/${APK_NAME}",
+            "sha256": "${SHA256}",
+            "size": ${SIZE},
+            "releaseNotes": ${NOTES_JSON}
+          }
+          JSON
+
+          echo "===== releases/latest.json ====="
+          cat releases/latest.json
+          echo "================================"
+
+      - name: Upload latest.json to branch via GitHub Contents API
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CONTENT_B64=$(base64 -w 0 releases/latest.json)
+
+          CURRENT_SHA=$(curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/contents/releases/latest.json?ref=${TARGET_BRANCH}" \
+            | jq -r '.sha // empty')
+
+          jq -nc \
+            --arg msg "latest.json → ${TAG} (run ${GITHUB_RUN_NUMBER})" \
+            --arg content "$CONTENT_B64" \
+            --arg branch "${TARGET_BRANCH}" \
+            --arg sha "$CURRENT_SHA" \
+            '{
+              message: $msg,
+              content: $content,
+              branch: $branch
+            } + (if $sha == "" then {} else {sha: $sha} end)' > payload.json
+
+          echo "Uploading to ${TARGET_BRANCH}… (existing sha: ${CURRENT_SHA:-<none>})"
+          RESP=$(curl -s -X PUT \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/contents/releases/latest.json \
+            -d @payload.json)
+
+          echo "$RESP" | jq .
+          if [ "$(echo "$RESP" | jq -r '.content.path // empty')" != "releases/latest.json" ]; then
+            echo "Failed to update releases/latest.json on ${TARGET_BRANCH}"
+            exit 1
+          fi
+
+      - name: Show raw latest.json URL
+        run: |
+          echo "RAW URL (paste in browser to verify):"
+          echo "https://raw.githubusercontent.com/${{ github.repository }}/${TARGET_BRANCH}/releases/latest.json"
