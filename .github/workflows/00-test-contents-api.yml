@@ -1,0 +1,68 @@
+name: 00 Test Contents API write
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  write:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Build a tiny file
+        run: |
+          mkdir -p releases
+          echo "ping $(date -u +'%Y-%m-%dT%H:%M:%SZ')" > releases/ping.txt
+          cat releases/ping.txt
+
+      - name: Upload ping.txt to main via GitHub API
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Base64 encode the file for the Contents API
+          CONTENT_B64=$(base64 -w 0 releases/ping.txt)
+
+          # If the file already exists, get its SHA (required for updates)
+          CURRENT_SHA=$(curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/contents/releases/ping.txt?ref=main" \
+            | jq -r '.sha // empty')
+
+          # Build payload
+          jq -nc \
+            --arg msg "test: write ping.txt (run ${{ github.run_number }})" \
+            --arg content "$CONTENT_B64" \
+            --arg branch "main" \
+            --arg sha "$CURRENT_SHA" \
+            '{
+              message: $msg,
+              content: $content,
+              branch: $branch
+            } + (if $sha == "" then {} else {sha: $sha} end)' > payload.json
+
+          # PUT to the Contents API
+          RESP=$(curl -s -X PUT \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/contents/releases/ping.txt \
+            -d @payload.json)
+
+          echo "$RESP" | jq .
+
+          # Simple success check
+          if [ "$(echo "$RESP" | jq -r '.content.path // empty')" != "releases/ping.txt" ]; then
+            echo "Failed to update releases/ping.txt on main"
+            exit 1
+          fi
+
+      - name: Show raw URL
+        run: |
+          echo "Raw URL:"
+          echo "https://raw.githubusercontent.com/${{ github.repository }}/main/releases/ping.txt"
