@@ -1,7 +1,6 @@
 name: Publish local APK → latest.json (manual + release)
 
 on:
-  # Manual trigger with inputs so you can pick the release tag and target branch
   workflow_dispatch:
     inputs:
       tag:
@@ -11,7 +10,6 @@ on:
         description: 'Branch to write latest.json to'
         required: false
         default: 'main'
-  # Optional: still runs automatically when a Release is published/edited
   release:
     types: [published, edited]
 
@@ -27,7 +25,6 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y jq
 
-      # Resolve TAG and RELEASE_ID for both triggers (manual or release)
       - name: Resolve release (tag/id)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -65,7 +62,6 @@ jobs:
           ASSETS_JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$ASSETS_API")
           echo "$ASSETS_JSON" > assets.json
 
-          # Pick the first *.apk asset
           APK_ID=$(jq -r '[.[] | select(.name | endswith(".apk"))][0].id' assets.json)
           APK_NAME=$(jq -r '[.[] | select(.name | endswith(".apk"))][0].name' assets.json)
           if [ -z "$APK_ID" ] || [ "$APK_ID" = "null" ]; then
@@ -73,7 +69,7 @@ jobs:
             exit 1
           fi
 
-          echo "APK_ID=$APK_ID"   >> $GITHUB_ENV
+          echo "APK_ID=$APK_ID" >> $GITHUB_ENV
           echo "APK_NAME=$APK_NAME" >> $GITHUB_ENV
           echo "Found APK: $APK_NAME (asset id: $APK_ID)"
 
@@ -88,11 +84,16 @@ jobs:
             -o release.apk
           ls -lh release.apk
 
-      - name: Compute SHA256 and size
+      - name: Compute SHA256, MD5 and size
         run: |
-          echo "SHA256=$(sha256sum release.apk | cut -d ' ' -f1)" >> $GITHUB_ENV
-          echo "SIZE=$(wc -c < release.apk)" >> $GITHUB_ENV
+          SHA256=$(sha256sum release.apk | cut -d ' ' -f1)
+          MD5=$(md5sum release.apk | cut -d ' ' -f1)
+          SIZE=$(wc -c < release.apk)
+          echo "SHA256=$SHA256" >> $GITHUB_ENV
+          echo "MD5=$MD5" >> $GITHUB_ENV
+          echo "SIZE=$SIZE" >> $GITHUB_ENV
           echo "sha256: $SHA256"
+          echo "md5: $MD5"
           echo "size (bytes): $SIZE"
 
       - name: Derive versionName from tag (strip leading v)
@@ -108,11 +109,11 @@ jobs:
         run: |
           mkdir -p releases
 
-          # Get release notes body and encode as a proper JSON string
-          NOTES_JSON=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+          # Get release notes body and turn into a proper JSON string
+          NOTES_RAW=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}" \
-            | jq -r '.body // ""' \
-            | jq -Rs '.')  # turn raw text into a JSON string
+            | jq -r '.body // ""')
+          NOTES_JSON=$(printf '%s' "$NOTES_RAW" | jq -Rs '.')
 
           cat > releases/latest.json <<JSON
           {
@@ -120,6 +121,7 @@ jobs:
             "versionCode": ${GITHUB_RUN_NUMBER},
             "apkUrl": "https://github.com/${{ github.repository }}/releases/download/${TAG}/${APK_NAME}",
             "sha256": "${SHA256}",
+            "md5": "${MD5}",
             "size": ${SIZE},
             "releaseNotes": ${NOTES_JSON}
           }
@@ -167,5 +169,5 @@ jobs:
 
       - name: Show raw latest.json URL
         run: |
-          echo "RAW URL (paste in browser to verify):"
+          echo "RAW URL:"
           echo "https://raw.githubusercontent.com/${{ github.repository }}/${TARGET_BRANCH}/releases/latest.json"
