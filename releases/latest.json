@@ -1,8 +1,9 @@
 {
   "versionName": "1.0.4",
-  "versionCode": 12,
+  "versionCode": 6,
   "apkUrl": "https://github.com/DaylyBuy/dayly-buy-market-updates/releases/download/v1.0.4/Dayly.Buy.Market.apk",
   "sha256": "42fdc2384a3e47512ee7128a760f9ecfcd30406ccd4ee355de3779c17a4058b6",
+  "md5": "dafcf4b16ded0efb666fdd7b41784ece",
   "size": 86216557,
   "releaseNotes": "opting md5 update"
 }
