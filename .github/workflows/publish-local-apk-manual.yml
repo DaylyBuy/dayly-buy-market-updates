@@ -1,4 +1,4 @@
-name: Publish local APK → latest.json (manual + release)
+name: Publish APK to latest.json (manual + release)
 
 on:
   workflow_dispatch:
@@ -20,24 +20,24 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - name: Install tools (jq + fallbacks)
+      - name: Install tools
         run: |
           set -e
           sudo apt-get update -y
           sudo apt-get install -y jq python3-pip
-          # aapt may or may not exist; if not, we'll use androguard
+          # aapt is optional; if not present we fall back to Python (androguard)
           sudo apt-get install -y aapt || true
 
-      - name: Resolve release (tag/id)
+      - name: Resolve repository + inputs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          # Expose REPO to later steps to avoid ${{ github.repository }} in shell
           echo "REPO=$GITHUB_REPOSITORY" >> $GITHUB_ENV
+          # Resolve release target (manual or release-triggered)
           if [ "${{ github.event_name }}" = "release" ]; then
-            echo "TAG=${{ github.event.release.tag_name }}"   >> $GITHUB_ENV
-            echo "RELEASE_ID=${{ github.event.release.id }}"  >> $GITHUB_ENV
+            echo "TAG=${{ github.event.release.tag_name }}"  >> $GITHUB_ENV
+            echo "RELEASE_ID=${{ github.event.release.id }}" >> $GITHUB_ENV
           else
             INPUT_TAG="${{ inputs.tag }}"
             if [ -n "$INPUT_TAG" ]; then
@@ -52,14 +52,12 @@ jobs:
             echo "RELEASE_ID=$(echo "$RESP" | jq -r .id)" >> $GITHUB_ENV
           fi
 
-      - name: Set TARGET_BRANCH
-        run: |
           TB="${{ inputs.target_branch }}"
           [ -z "$TB" ] && TB="main"
           echo "TARGET_BRANCH=$TB" >> $GITHUB_ENV
-          echo "Will write to branch: $TB"
+          echo "Using repo=$GITHUB_REPOSITORY tag=$TAG branch=$TB"
 
-      - name: Find .apk asset on the release
+      - name: Find .apk asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -78,7 +76,7 @@ jobs:
           echo "APK_NAME=$APK_NAME" >> $GITHUB_ENV
           echo "Found APK: $APK_NAME (asset id: $APK_ID)"
 
-      - name: Download APK asset
+      - name: Download APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -90,7 +88,7 @@ jobs:
             -o release.apk
           ls -lh release.apk
 
-      - name: Compute SHA256, MD5 and size
+      - name: Compute checksums and size
         run: |
           set -e
           SHA256=$(sha256sum release.apk | cut -d ' ' -f1)
@@ -101,7 +99,7 @@ jobs:
           echo "SIZE=$SIZE"     >> $GITHUB_ENV
           echo "sha256: $SHA256"
           echo "md5: $MD5"
-          echo "size (bytes): $SIZE"
+          echo "size: $SIZE"
 
       - name: Extract versionCode/versionName from APK
         run: |
@@ -123,13 +121,9 @@ PY
             APK_VERSION_NAME="$(echo "$PYOUT" | sed -n '2p')"
           fi
 
-          if [ -z "$APK_VERSION_CODE" ]; then
-            echo "Could not extract APK versionCode"; exit 1
+          if [ -z "$APK_VERSION_CODE" ] || [ -z "$APK_VERSION_NAME" ]; then
+            echo "Failed to extract version info from APK"; exit 1
           fi
-          if [ -z "$APK_VERSION_NAME" ]; then
-            echo "Could not extract APK versionName"; exit 1
-          fi
-
           echo "APK_VERSION_CODE=$APK_VERSION_CODE" >> $GITHUB_ENV
           echo "APK_VERSION_NAME=$APK_VERSION_NAME" >> $GITHUB_ENV
           echo "apk versionCode: $APK_VERSION_CODE"
@@ -141,8 +135,6 @@ PY
         run: |
           set -e
           mkdir -p releases
-
-          # Get release notes body and convert to a JSON string
           NOTES_RAW=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${REPO}/releases/${RELEASE_ID}" | jq -r '.body // ""')
           NOTES_JSON=$(printf '%s' "$NOTES_RAW" | jq -Rs '.')
@@ -163,13 +155,12 @@ PY
           cat releases/latest.json
           echo "================================"
 
-      - name: Upload latest.json to branch via GitHub Contents API
+      - name: Upload latest.json via Contents API
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           CONTENT_B64=$(base64 -w 0 releases/latest.json)
-
           CURRENT_SHA=$(curl -s \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -187,11 +178,10 @@ PY
               branch: $branch
             } + (if $sha == "" then {} else {sha: $sha} end)' > payload.json
 
-          echo "Uploading to ${TARGET_BRANCH}… (existing sha: ${CURRENT_SHA:-<none>})"
           RESP=$(curl -s -X PUT \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${REPO}/contents/releases/latest.json \
+            "https://api.github.com/repos/${REPO}/contents/releases/latest.json" \
             -d @payload.json)
 
           echo "$RESP" | jq .
@@ -200,7 +190,6 @@ PY
             exit 1
           fi
 
-      - name: Show raw latest.json URL
+      - name: Show raw URL
         run: |
-          echo "RAW URL:"
           echo "https://raw.githubusercontent.com/${REPO}/${TARGET_BRANCH}/releases/latest.json"
