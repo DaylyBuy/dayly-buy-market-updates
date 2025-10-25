@@ -106,12 +106,12 @@ jobs:
           else
             python3 -m pip install --quiet androguard
             PYOUT="$(python3 - <<'PY'
-from androguard.core.bytecodes.apk import APK
-a = APK("release.apk")
-print(a.get_androidversion_code() or "")
-print(a.get_androidversion_name() or "")
-PY
-)"
+          from androguard.core.bytecodes.apk import APK
+          a = APK("release.apk")
+          print(a.get_androidversion_code() or "")
+          print(a.get_androidversion_name() or "")
+          PY
+          )"
             APK_VERSION_CODE="$(echo "$PYOUT" | sed -n '1p')"
             APK_VERSION_NAME="$(echo "$PYOUT" | sed -n '2p')"
           fi
