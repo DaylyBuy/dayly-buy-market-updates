@@ -25,7 +25,7 @@ jobs:
           set -e
           sudo apt-get update -y
           sudo apt-get install -y jq python3-pip
-          # aapt may not exist on all runners; if missing, we'll use androguard
+          # aapt is optional; if unavailable we fall back to androguard
           sudo apt-get install -y aapt || true
 
       - name: Resolve repository + inputs
@@ -73,6 +73,7 @@ jobs:
             echo "No .apk asset found on this release. Upload an .apk and run again."
             exit 1
           fi
+
           echo "APK_ID=$APK_ID"     >> $GITHUB_ENV
           echo "APK_NAME=$APK_NAME" >> $GITHUB_ENV
           echo "Found APK: $APK_NAME (asset id: $APK_ID)"
@@ -125,6 +126,7 @@ PY
           if [ -z "$APK_VERSION_CODE" ] || [ -z "$APK_VERSION_NAME" ]; then
             echo "Failed to extract version info from APK"; exit 1
           fi
+
           echo "APK_VERSION_CODE=$APK_VERSION_CODE" >> $GITHUB_ENV
           echo "APK_VERSION_NAME=$APK_VERSION_NAME" >> $GITHUB_ENV
           echo "apk versionCode: $APK_VERSION_CODE"
@@ -162,6 +164,7 @@ PY
         run: |
           set -e
           CONTENT_B64=$(base64 -w 0 releases/latest.json)
+
           CURRENT_SHA=$(curl -s \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -169,7 +172,7 @@ PY
             | jq -r '.sha // empty')
 
           jq -nc \
-            --arg msg "latest.json → ${TAG} (APK vCode ${APK_VERSION_CODE})" \
+            --arg msg "latest.json -> ${TAG} (APK vCode ${APK_VERSION_CODE})" \
             --arg content "$CONTENT_B64" \
             --arg branch "${TARGET_BRANCH}" \
             --arg sha "$CURRENT_SHA" \
