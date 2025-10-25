@@ -7,7 +7,7 @@ on:
         description: 'Release tag (e.g., v1.0.4). Leave empty to use latest release.'
         required: false
       target_branch:
-        description: 'Branch to write latest.json to'
+        description: 'Branch to write releases/latest.json to'
         required: false
         default: 'main'
   release:
@@ -25,7 +25,7 @@ jobs:
           set -e
           sudo apt-get update -y
           sudo apt-get install -y jq python3-pip
-          # aapt is optional; if not present we fall back to Python (androguard)
+          # aapt may not exist on all runners; if missing, we'll use androguard
           sudo apt-get install -y aapt || true
 
       - name: Resolve repository + inputs
@@ -34,7 +34,8 @@ jobs:
         run: |
           set -e
           echo "REPO=$GITHUB_REPOSITORY" >> $GITHUB_ENV
-          # Resolve release target (manual or release-triggered)
+
+          # Determine TAG and RELEASE_ID (manual vs release trigger)
           if [ "${{ github.event_name }}" = "release" ]; then
             echo "TAG=${{ github.event.release.tag_name }}"  >> $GITHUB_ENV
             echo "RELEASE_ID=${{ github.event.release.id }}" >> $GITHUB_ENV
