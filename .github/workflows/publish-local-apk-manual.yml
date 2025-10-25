@@ -69,7 +69,7 @@ jobs:
 
           APK_ID=$(jq -r '[.[] | select(.name | endswith(".apk"))][0].id' assets.json)
           APK_NAME=$(jq -r '[.[] | select(.name | endswith(".apk"))][0].name' assets.json)
-          if [ -z "$APK_ID" ] || [ "$APK_ID" = "null" ]; then
+          if [ -z "$APK_ID" ] || [ "$APK_ID" = "null" ] || [ -z "$APK_NAME" ] || [ "$APK_NAME" = "null" ]; then
             echo "No .apk asset found on this release. Upload an .apk and run again."
             exit 1
           fi

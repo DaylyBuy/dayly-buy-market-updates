@@ -1,10 +1,11 @@
-name: Manual Test
+name: Workflow Dispatch Smoke Test
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
-  t:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "ok"
+      - name: Say hello
+        run: echo "workflow_dispatch is working"
