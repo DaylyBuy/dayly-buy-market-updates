@@ -1,4 +1,4 @@
-name: Publish APK to latest.json (manual + release)
+name: Publish APK to latest.json (manual only)
 
 on:
   workflow_dispatch:
@@ -10,8 +10,6 @@ on:
         description: 'Branch to write releases/latest.json to'
         required: false
         default: 'main'
-  release:
-    types: [published, edited]
 
 permissions:
   contents: write
@@ -28,30 +26,25 @@ jobs:
           # aapt is optional; if unavailable we fall back to androguard
           sudo apt-get install -y aapt || true
 
-      - name: Resolve repository + inputs
+      - name: Resolve repository + inputs (manual only)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           echo "REPO=$GITHUB_REPOSITORY" >> $GITHUB_ENV
 
-          # Determine TAG and RELEASE_ID (manual vs release trigger)
-          if [ "${{ github.event_name }}" = "release" ]; then
-            echo "TAG=${{ github.event.release.tag_name }}"  >> $GITHUB_ENV
-            echo "RELEASE_ID=${{ github.event.release.id }}" >> $GITHUB_ENV
+          INPUT_TAG="${{ inputs.tag }}"
+          if [ -n "$INPUT_TAG" ]; then
+            RESP=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$INPUT_TAG")
           else
-            INPUT_TAG="${{ inputs.tag }}"
-            if [ -n "$INPUT_TAG" ]; then
-              RESP=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$INPUT_TAG")
-            else
-              RESP=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest")
-            fi
-            echo "$RESP" | jq .
-            echo "TAG=$(echo "$RESP" | jq -r .tag_name)" >> $GITHUB_ENV
-            echo "RELEASE_ID=$(echo "$RESP" | jq -r .id)" >> $GITHUB_ENV
+            RESP=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest")
           fi
+
+          echo "$RESP" | jq .
+          echo "TAG=$(echo "$RESP" | jq -r .tag_name)"   >> $GITHUB_ENV
+          echo "RELEASE_ID=$(echo "$RESP" | jq -r .id)"   >> $GITHUB_ENV
 
           TB="${{ inputs.target_branch }}"
           [ -z "$TB" ] && TB="main"
@@ -138,6 +131,7 @@ PY
         run: |
           set -e
           mkdir -p releases
+
           NOTES_RAW=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${REPO}/releases/${RELEASE_ID}" | jq -r '.body // ""')
           NOTES_JSON=$(printf '%s' "$NOTES_RAW" | jq -Rs '.')
@@ -158,7 +152,7 @@ PY
           cat releases/latest.json
           echo "================================"
 
-            - name: Upload latest.json via Contents API
+      - name: Upload latest.json via Contents API
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
