@@ -158,7 +158,7 @@ PY
           cat releases/latest.json
           echo "================================"
 
-      - name: Upload latest.json via Contents API
+            - name: Upload latest.json via Contents API
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
